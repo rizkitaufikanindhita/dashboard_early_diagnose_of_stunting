@@ -221,15 +221,15 @@
                     </DialogHeader>
                     <div class="space-y-4">
                         <div>
-                            <Label for="uid" class="text-slate-200">UID</Label>
+                            <Label for="uid" class="text-slate-200 mb-2">UID</Label>
                             <Input id="uid" bind:value={newToddler.uid} placeholder="Enter UID" class="bg-slate-800/50 border-slate-600/50 text-white placeholder-slate-400" />
                         </div>
                         <div>
-                            <Label for="name" class="text-slate-200">Name</Label>
+                            <Label for="name" class="text-slate-200 mb-2">Name</Label>
                             <Input id="name" bind:value={newToddler.name} placeholder="Enter name" class="bg-slate-800/50 border-slate-600/50 text-white placeholder-slate-400" />
                         </div>
                         <div>
-                            <Label for="gender" class="text-slate-200">Gender</Label>
+                            <Label for="gender" class="text-slate-200 mb-2">Gender</Label>
                             <select id="gender" bind:value={newToddler.gender} class="w-full p-2 bg-slate-800/50 border border-slate-600/50 rounded-md text-white">
                                 <option value="male">Male</option>
                                 <option value="female">Female</option>
