@@ -66,7 +66,9 @@ export const POST: RequestHandler = async (event) => {
 		// Jalankan fetch() ke Flask di background
 		setTimeout(async () => {
 			try {
-				const response = await fetch('http://192.168.1.6:5001/api/agent-gemini', {
+				const aiAgentUrl = process.env.AI_AGENT_URL;
+
+				const response = await fetch(aiAgentUrl + '/api/agent-gemini', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({
