@@ -9,11 +9,7 @@ export const GET: RequestHandler = async (event) => {
 		// await authMiddleware(event);
 
 		// Fetch all toddlers from the database
-		const toddlers = await prisma.toddler.findMany({
-			include: {
-				Status: true // Include parent details if needed
-			}
-		});
+		const toddlers = await prisma.toddler.findMany({});
 
 		return json(toddlers);
 	} catch (err) {

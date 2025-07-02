@@ -7,26 +7,57 @@ import HmacSHA256 from 'crypto-js/hmac-sha256';
 import Utf8 from 'crypto-js/enc-utf8';
 import Hex from 'crypto-js/enc-hex';
 
-const AES_KEY = process.env.AES_KEY || '';
-const AES_IV = process.env.AES_IV || '';
-const HMAC_KEY = process.env.HMAC_KEY || '';
+const AES_KEY = process.env.AES_KEY!;
+const AES_IV = process.env.AES_IV!;
+const HMAC_KEY = process.env.HMAC_KEY!;
 
 export const GET: RequestHandler = async (event) => {
 	try {
 		// Authenticate user
 		await authMiddleware(event);
 
-		// Fetch all toddlers from the database
-		const status = await prisma.status.findMany({
-			include: {
-				toddler: true // Include parent details if needed
-			}
-		});
+		// Fetch all status records
+		const statuses = await prisma.status.findMany();
+		const results = [];
 
-		return json(status);
+		for (const status of statuses) {
+			// Dekripsi payload
+			let decryptedText: string;
+			try {
+				const decryptedBytes = AES.decrypt(status.encrypted_payload, Hex.parse(AES_KEY), {
+					iv: Hex.parse(AES_IV)
+				});
+				decryptedText = decryptedBytes.toString(Utf8).replace(/\0+$/, '');
+			} catch (e) {
+				console.error('Decryption failed for status id', status.id);
+				continue;
+			}
+			let parsed;
+			try {
+				parsed = JSON.parse(decryptedText);
+			} catch (e) {
+				console.error('JSON parse failed for status id', status.id);
+				continue;
+			}
+
+			// Cari toddler berdasarkan uid
+			let toddler = null;
+			if (parsed.uid) {
+				toddler = await prisma.toddler.findUnique({ where: { uid: parsed.uid } });
+			}
+
+			results.push({
+				...parsed,
+				toddler,
+				createdAt: status.createdAt,
+				recommendation: status.recommendation
+			});
+		}
+
+		return json(results);
 	} catch (err) {
-		console.error('Error fetching toddlers:', err);
-		return json({ error: 'Failed to fetch toddlers' }, { status: 500 });
+		console.error('Error fetching/decrypting statuses:', err);
+		return json({ error: 'Failed to fetch/decrypt statuses' }, { status: 500 });
 	}
 };
 
@@ -118,55 +149,33 @@ export const POST: RequestHandler = async (event) => {
 	try {
 		const { payload, hmac } = await event.request.json();
 
-		// ✅ Verifikasi HMAC
-		const calculatedHmac = HmacSHA256(payload, Utf8.parse(HMAC_KEY)).toString(Hex);
+		// 1. Verifikasi HMAC
+		const calculatedHmac = HmacSHA256(payload, Hex.parse(HMAC_KEY)).toString(Hex);
 		if (calculatedHmac !== hmac) {
 			return json({ error: 'Invalid HMAC - Data integrity compromised' }, { status: 403 });
 		}
 
-		// ✅ Dekripsi AES-256-CBC
-		const decryptedBytes = AES.decrypt(payload, Utf8.parse(AES_KEY), {
-			iv: Utf8.parse(AES_IV)
+		// 2. Simpan payload terenkripsi ke DB
+		const saved = await prisma.status.create({
+			data: {
+				encrypted_payload: payload
+			}
 		});
-		const decryptedText = decryptedBytes.toString(Utf8);
+
+		// 3. Dekripsi payload untuk dikirim ke AI agent
+		let decryptedText: string;
+		try {
+			const decryptedBytes = AES.decrypt(payload, Hex.parse(AES_KEY), {
+				iv: Hex.parse(AES_IV)
+			});
+			decryptedText = decryptedBytes.toString(Utf8).replace(/\0+$/, '');
+		} catch (e) {
+			return json({ error: 'Decryption failed' }, { status: 400 });
+		}
 		const parsed = JSON.parse(decryptedText);
-		const { data, signature } = parsed;
+		const responseToEsp32 = json({ message: 'Status created successfully' }, { status: 201 });
 
-		// ✅ Ambil data
-		const parsedData = JSON.parse(data);
-		const { uid, status, height, age } = parsedData;
-
-		// ✅ Simpan ke DB
-		const toddler = await prisma.toddler.findUnique({ where: { uid } });
-		if (!toddler) {
-			return json({ error: `UID ${uid} tidak ditemukan` }, { status: 404 });
-		}
-
-		const existing = await prisma.status.findFirst({
-			where: { toddler: { uid }, age },
-			include: { toddler: true }
-		});
-
-		let saved;
-		if (existing) {
-			saved = await prisma.status.update({
-				where: { id: existing.id },
-				data: { status, height, age },
-				include: { toddler: true }
-			});
-		} else {
-			saved = await prisma.status.create({
-				data: {
-					toddler: { connect: { uid } },
-					status,
-					height,
-					age
-				},
-				include: { toddler: true }
-			});
-		}
-
-		// ✅ Kirim ke AI agent async
+		// 4. Kirim ke AI agent (async)
 		setTimeout(async () => {
 			try {
 				const aiAgentUrl = process.env.AI_AGENT_URL;
@@ -175,10 +184,10 @@ export const POST: RequestHandler = async (event) => {
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({
 						id: saved.id,
-						age: saved.age,
-						height: saved.height,
-						gender: saved.toddler.gender,
-						status: saved.status
+						age: parsed.age,
+						height: parsed.height,
+						gender: parsed.gender,
+						status: parsed.status
 					})
 				});
 				if (response.ok) {
@@ -195,7 +204,7 @@ export const POST: RequestHandler = async (event) => {
 			}
 		}, 0);
 
-		return json({ message: 'Status securely created' }, { status: 201 });
+		return responseToEsp32;
 	} catch (error) {
 		console.error('Decryption/Storage error:', error);
 		return json({ error: 'Invalid encrypted data or internal error' }, { status: 500 });

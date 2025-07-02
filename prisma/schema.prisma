@@ -31,8 +31,6 @@ model Toddler {
   uid    String @unique
   name   String
   gender Gender
-
-  Status Status[]
 }
 
 enum StatusStunting {
@@ -43,15 +41,8 @@ enum StatusStunting {
 }
 
 model Status {
-  id             String         @id @default(cuid())
-  toddlerId      String
-  status         StatusStunting
-  height         Float
-  age            Int
-  recommendation String?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-
-  // Relations
-  toddler Toddler @relation(fields: [toddlerId], references: [uid])
+  id                String   @id @default(cuid())
+  encrypted_payload String // Hanya kolom ini yang menyimpan data status
+  recommendation    String?
+  createdAt         DateTime @default(now())
 }
