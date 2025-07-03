@@ -1,15 +1,17 @@
 import type { RequestHandler } from './$types';
 import { json } from '@sveltejs/kit';
 import { prisma } from '$lib/server/db';
-import AES from 'crypto-js/aes';
-import Utf8 from 'crypto-js/enc-utf8';
-import Hex from 'crypto-js/enc-hex';
+import pkg from 'aes-js';
+const { ModeOfOperation, utils } = pkg;
 
 const AES_KEY = process.env.AES_KEY!;
 const AES_IV = process.env.AES_IV!;
 
 export const GET: RequestHandler = async (event) => {
 	try {
+		// Authenticate user
+		// await authMiddleware(event);
+
 		const uid = event.params.uid;
 
 		if (!uid) {
@@ -25,10 +27,30 @@ export const GET: RequestHandler = async (event) => {
 		for (const status of statuses) {
 			let decryptedText: string;
 			try {
-				const decryptedBytes = AES.decrypt(status.encrypted_payload, Hex.parse(AES_KEY), {
-					iv: Hex.parse(AES_IV)
-				});
-				decryptedText = decryptedBytes.toString(Utf8).replace(/\0+$/, '');
+				// Convert hex strings to Uint8Arrays
+				const keyBytes = new Uint8Array(
+					AES_KEY.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16))
+				);
+				const ivBytes = new Uint8Array(
+					AES_IV.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16))
+				);
+				const payloadBytes = new Uint8Array(
+					status.encrypted_payload.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16))
+				);
+
+				// Create AES cipher
+				const aesCbc = new ModeOfOperation.cbc(keyBytes, ivBytes);
+
+				// Decrypt
+				const decryptedBytes = aesCbc.decrypt(payloadBytes);
+
+				// Remove PKCS7 padding
+				const paddingLength = decryptedBytes[decryptedBytes.length - 1];
+				const actualLength = decryptedBytes.length - paddingLength;
+				const actualData = decryptedBytes.slice(0, actualLength);
+
+				// Convert to string
+				decryptedText = utils.utf8.fromBytes(actualData);
 			} catch (e) {
 				console.error('Decryption failed for status id', status.id);
 				continue;

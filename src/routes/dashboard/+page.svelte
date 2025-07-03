@@ -86,26 +86,40 @@
 
         // Count toddlers by their latest status
         for (const toddler of toddlers) {
-            if (toddler.Status && toddler.Status.length > 0) {
-                // Sort by createdAt to get the latest status
-                const latestStatus = toddler.Status.sort((a: any, b: any) => 
-                    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-                )[0];
+            try {
+                const token = localStorage.getItem('token');
+                const response = await fetch(`/api/toddler/${toddler.uid}/status`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
                 
-                switch (latestStatus.status) {
-                    case 'normal':
-                        summaryStats.normalCount++;
-                        break;
-                    case 'stunted':
-                        summaryStats.stuntedCount++;
-                        break;
-                    case 'severely_stunted':
-                        summaryStats.severelyStuntedCount++;
-                        break;
-                    case 'tinggi':
-                        summaryStats.tallCount++;
-                        break;
+                if (response.ok) {
+                    const statusData = await response.json();
+                    if (statusData && statusData.length > 0) {
+                        // Sort by createdAt to get the latest status
+                        const latestStatus = statusData.sort((a: any, b: any) => 
+                            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+                        )[0];
+                        
+                        switch (latestStatus.status) {
+                            case 'normal':
+                                summaryStats.normalCount++;
+                                break;
+                            case 'stunted':
+                                summaryStats.stuntedCount++;
+                                break;
+                            case 'severely_stunted':
+                                summaryStats.severelyStuntedCount++;
+                                break;
+                            case 'tinggi':
+                                summaryStats.tallCount++;
+                                break;
+                        }
+                    }
                 }
+            } catch (error) {
+                console.error(`Error fetching status for toddler ${toddler.uid}:`, error);
             }
         }
     }
