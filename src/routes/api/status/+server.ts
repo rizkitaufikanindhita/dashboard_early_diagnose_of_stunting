@@ -2,14 +2,20 @@ import type { RequestHandler } from './$types';
 import { json } from '@sveltejs/kit';
 import { prisma } from '$lib/server/db';
 import { authMiddleware } from '$lib/server/auth';
-import AES from 'crypto-js/aes';
 import HmacSHA256 from 'crypto-js/hmac-sha256';
-import Utf8 from 'crypto-js/enc-utf8';
 import Hex from 'crypto-js/enc-hex';
+import pkg from 'aes-js';
+const { ModeOfOperation, utils } = pkg;
 
+// Convert hex strings to byte arrays (matching Arduino format)
 const AES_KEY = process.env.AES_KEY!;
 const AES_IV = process.env.AES_IV!;
 const HMAC_KEY = process.env.HMAC_KEY!;
+
+// Helper function to convert hex string to WordArray (for HMAC)
+function hexToWordArray(hexString: string) {
+	return Hex.parse(hexString);
+}
 
 export const GET: RequestHandler = async (event) => {
 	try {
@@ -24,10 +30,30 @@ export const GET: RequestHandler = async (event) => {
 			// Dekripsi payload
 			let decryptedText: string;
 			try {
-				const decryptedBytes = AES.decrypt(status.encrypted_payload, Hex.parse(AES_KEY), {
-					iv: Hex.parse(AES_IV)
-				});
-				decryptedText = decryptedBytes.toString(Utf8).replace(/\0+$/, '');
+				// Convert hex strings to Uint8Arrays
+				const keyBytes = new Uint8Array(
+					AES_KEY.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16))
+				);
+				const ivBytes = new Uint8Array(
+					AES_IV.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16))
+				);
+				const payloadBytes = new Uint8Array(
+					status.encrypted_payload.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16))
+				);
+
+				// Create AES cipher
+				const aesCbc = new ModeOfOperation.cbc(keyBytes, ivBytes);
+
+				// Decrypt
+				const decryptedBytes = aesCbc.decrypt(payloadBytes);
+
+				// Remove PKCS7 padding
+				const paddingLength = decryptedBytes[decryptedBytes.length - 1];
+				const actualLength = decryptedBytes.length - paddingLength;
+				const actualData = decryptedBytes.slice(0, actualLength);
+
+				// Convert to string
+				decryptedText = utils.utf8.fromBytes(actualData);
 			} catch (e) {
 				console.error('Decryption failed for status id', status.id);
 				continue;
@@ -147,70 +173,149 @@ export const GET: RequestHandler = async (event) => {
 
 export const POST: RequestHandler = async (event) => {
 	try {
-		const { payload, hmac } = await event.request.json();
+		// Parse JSON request
+		let requestData;
+		try {
+			requestData = await event.request.json();
+		} catch (parseError) {
+			console.error('JSON parse error:', parseError);
+			return json({ error: 'Invalid JSON format' }, { status: 400 });
+		}
+
+		const { payload, hmac } = requestData;
+
+		// Validate required fields
+		if (!payload || !hmac) {
+			return json({ error: 'Payload and HMAC are required' }, { status: 400 });
+		}
+
+		// Validate environment variables
+		if (!AES_KEY || !AES_IV || !HMAC_KEY) {
+			console.error('Missing environment variables: AES_KEY, AES_IV, or HMAC_KEY');
+			return json({ error: 'Server configuration error' }, { status: 500 });
+		}
 
 		// 1. Verifikasi HMAC
-		const calculatedHmac = HmacSHA256(payload, Hex.parse(HMAC_KEY)).toString(Hex);
-		if (calculatedHmac !== hmac) {
-			return json({ error: 'Invalid HMAC - Data integrity compromised' }, { status: 403 });
+		try {
+			const calculatedHmac = HmacSHA256(payload, Hex.parse(HMAC_KEY)).toString(Hex);
+			if (calculatedHmac !== hmac) {
+				console.error('HMAC mismatch:', { calculated: calculatedHmac, received: hmac });
+				return json({ error: 'Invalid HMAC - Data integrity compromised' }, { status: 403 });
+			}
+		} catch (hmacError) {
+			console.error('HMAC calculation error:', hmacError);
+			return json({ error: 'HMAC verification failed' }, { status: 500 });
 		}
 
 		// 2. Simpan payload terenkripsi ke DB
-		const saved = await prisma.status.create({
-			data: {
-				encrypted_payload: payload
-			}
-		});
+		let saved;
+		try {
+			saved = await prisma.status.create({
+				data: {
+					encrypted_payload: payload
+				}
+			});
+		} catch (dbError) {
+			console.error('Database error:', dbError);
+			return json({ error: 'Failed to save to database' }, { status: 500 });
+		}
 
 		// 3. Dekripsi payload untuk dikirim ke AI agent
-		// let decryptedText: string;
-		// try {
-		// 	const decryptedBytes = AES.decrypt(payload, enc.Hex.parse(AES_KEY), {
-		// 		iv: enc.Hex.parse(AES_IV),
-		// 		mode: CryptoJS.mode.CBC,
-		// 		padding: CryptoJS.pad.Pkcs7
-		// 	});
-		// 	decryptedText = decryptedBytes.toString(enc.Utf8);
-		// } catch (e) {
-		// 	return json({ error: 'Decryption failed' }, { status: 400 });
-		// }
-		// const parsed = JSON.parse(decryptedText);
-		// const responseToEsp32 = json({ message: 'Status created successfully' }, { status: 201 });
+		let decryptedText: string = '';
+		let parsed: any = null;
+		try {
+			// Try different decryption approaches
+			let decryptedBytes;
 
-		// // 4. Kirim ke AI agent (async)
-		// setTimeout(async () => {
-		// 	try {
-		// 		const aiAgentUrl = process.env.AI_AGENT_URL;
-		// 		const response = await fetch(`${aiAgentUrl}/api/agent-gemini`, {
-		// 			method: 'POST',
-		// 			headers: { 'Content-Type': 'application/json' },
-		// 			body: JSON.stringify({
-		// 				id: saved.id,
-		// 				age: parsed.age,
-		// 				height: parsed.height,
-		// 				gender: parsed.gender,
-		// 				status: parsed.status
-		// 			})
-		// 		});
-		// 		if (response.ok) {
-		// 			const { rekomendasi } = await response.json();
-		// 			if (rekomendasi) {
-		// 				await prisma.status.update({
-		// 					where: { id: saved.id },
-		// 					data: { recommendation: rekomendasi }
-		// 				});
-		// 			}
-		// 		}
-		// 	} catch (error) {
-		// 		console.error('AI Agent error:', error);
-		// 	}
-		// }, 0);
+			// Approach 1: Try with aes-js (more compatible with mbedtls)
+			try {
+				// Convert hex strings to Uint8Arrays
+				const keyBytes = new Uint8Array(
+					AES_KEY.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16))
+				);
+				const ivBytes = new Uint8Array(
+					AES_IV.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16))
+				);
+				const payloadBytes = new Uint8Array(
+					payload.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16))
+				);
 
-		// return responseToEsp32;
-		return json({ message: 'Status created successfully' }, { status: 201 });
+				// Create AES cipher
+				const aesCbc = new ModeOfOperation.cbc(keyBytes, ivBytes);
+
+				// Decrypt
+				const decryptedBytes = aesCbc.decrypt(payloadBytes);
+
+				// Remove PKCS7 padding
+				const paddingLength = decryptedBytes[decryptedBytes.length - 1];
+				const actualLength = decryptedBytes.length - paddingLength;
+				const actualData = decryptedBytes.slice(0, actualLength);
+
+				// Convert to string
+				decryptedText = utils.utf8.fromBytes(actualData);
+			} catch (e1) {
+				console.log('AES decryption failed:', e1);
+				throw new Error('Decryption failed');
+			}
+
+			// Check if decrypted text is empty
+			if (!decryptedText || decryptedText.trim() === '') {
+				console.error('Decrypted text is empty');
+				return json({ error: 'Decryption resulted in empty string' }, { status: 400 });
+			}
+
+			// Parse JSON string menjadi object
+			parsed = JSON.parse(decryptedText);
+			console.log('Parsed data:', parsed);
+		} catch (e) {
+			console.error('Decryption/JSON parse failed:', e);
+			console.error('Error details:', {
+				message: e instanceof Error ? e.message : 'Unknown error',
+				stack: e instanceof Error ? e.stack : 'No stack trace'
+			});
+			// Don't return error here since we already saved the encrypted payload
+		}
+
+		// 4. Kirim ke AI agent (async) - hanya jika dekripsi berhasil
+		if (parsed) {
+			setTimeout(async () => {
+				try {
+					const aiAgentUrl = process.env.AI_AGENT_URL;
+					const response = await fetch(`${aiAgentUrl}/api/agent-gemini`, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({
+							id: saved.id,
+							age: parsed.age,
+							height: parsed.height,
+							gender: parsed.gender,
+							status: parsed.status
+						})
+					});
+					if (response.ok) {
+						const { recommendation } = await response.json();
+						if (recommendation) {
+							await prisma.status.update({
+								where: { id: saved.id },
+								data: { recommendation: recommendation }
+							});
+						}
+					}
+				} catch (error) {
+					console.error('AI Agent error:', error);
+				}
+			}, 0);
+		}
+
+		return json(
+			{
+				message: 'Status created successfully'
+			},
+			{ status: 201 }
+		);
 	} catch (error) {
-		console.error('Decryption/Storage error:', error);
-		return json({ error: 'Invalid encrypted data or internal error' }, { status: 500 });
+		console.error('Unexpected error:', error);
+		return json({ error: 'Internal server error' }, { status: 500 });
 	}
 };
 
