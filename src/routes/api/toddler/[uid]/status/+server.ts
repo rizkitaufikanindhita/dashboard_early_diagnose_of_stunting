@@ -71,7 +71,23 @@ export const GET: RequestHandler = async (event) => {
 			}
 		}
 
-		return json(results);
+		// Filter: only keep the latest entry for each (year, month, age, uid)
+		const uniqueMap = new Map();
+		for (const item of results) {
+			const date = new Date(item.createdAt);
+			const year = date.getFullYear();
+			const month = date.getMonth() + 1; // 1-based
+			const key = `${item.uid}-${year}-${month}-${item.age}`;
+			if (
+				!uniqueMap.has(key) ||
+				new Date(item.createdAt) > new Date(uniqueMap.get(key).createdAt)
+			) {
+				uniqueMap.set(key, item);
+			}
+		}
+		const filteredResults = Array.from(uniqueMap.values());
+
+		return json(filteredResults);
 	} catch (err) {
 		console.error('Error fetching toddler status:', err);
 		return json({ error: 'Failed to fetch toddler status' }, { status: 500 });
