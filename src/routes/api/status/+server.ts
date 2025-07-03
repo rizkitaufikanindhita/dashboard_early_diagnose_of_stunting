@@ -2,7 +2,7 @@ import type { RequestHandler } from './$types';
 import { json } from '@sveltejs/kit';
 import { prisma } from '$lib/server/db';
 import { authMiddleware } from '$lib/server/auth';
-import AES from 'crypto-js/aes';
+import { AES, enc } from 'crypto-js';
 import HmacSHA256 from 'crypto-js/hmac-sha256';
 import Utf8 from 'crypto-js/enc-utf8';
 import Hex from 'crypto-js/enc-hex';
@@ -163,48 +163,51 @@ export const POST: RequestHandler = async (event) => {
 		});
 
 		// 3. Dekripsi payload untuk dikirim ke AI agent
-		let decryptedText: string;
-		try {
-			const decryptedBytes = AES.decrypt(payload, Hex.parse(AES_KEY), {
-				iv: Hex.parse(AES_IV)
-			});
-			decryptedText = decryptedBytes.toString(Utf8).replace(/\0+$/, '');
-		} catch (e) {
-			return json({ error: 'Decryption failed' }, { status: 400 });
-		}
-		const parsed = JSON.parse(decryptedText);
-		const responseToEsp32 = json({ message: 'Status created successfully' }, { status: 201 });
+		// let decryptedText: string;
+		// try {
+		// 	const decryptedBytes = AES.decrypt(payload, enc.Hex.parse(AES_KEY), {
+		// 		iv: enc.Hex.parse(AES_IV),
+		// 		mode: CryptoJS.mode.CBC,
+		// 		padding: CryptoJS.pad.Pkcs7
+		// 	});
+		// 	decryptedText = decryptedBytes.toString(enc.Utf8);
+		// } catch (e) {
+		// 	return json({ error: 'Decryption failed' }, { status: 400 });
+		// }
+		// const parsed = JSON.parse(decryptedText);
+		// const responseToEsp32 = json({ message: 'Status created successfully' }, { status: 201 });
 
-		// 4. Kirim ke AI agent (async)
-		setTimeout(async () => {
-			try {
-				const aiAgentUrl = process.env.AI_AGENT_URL;
-				const response = await fetch(`${aiAgentUrl}/api/agent-gemini`, {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({
-						id: saved.id,
-						age: parsed.age,
-						height: parsed.height,
-						gender: parsed.gender,
-						status: parsed.status
-					})
-				});
-				if (response.ok) {
-					const { rekomendasi } = await response.json();
-					if (rekomendasi) {
-						await prisma.status.update({
-							where: { id: saved.id },
-							data: { recommendation: rekomendasi }
-						});
-					}
-				}
-			} catch (error) {
-				console.error('AI Agent error:', error);
-			}
-		}, 0);
+		// // 4. Kirim ke AI agent (async)
+		// setTimeout(async () => {
+		// 	try {
+		// 		const aiAgentUrl = process.env.AI_AGENT_URL;
+		// 		const response = await fetch(`${aiAgentUrl}/api/agent-gemini`, {
+		// 			method: 'POST',
+		// 			headers: { 'Content-Type': 'application/json' },
+		// 			body: JSON.stringify({
+		// 				id: saved.id,
+		// 				age: parsed.age,
+		// 				height: parsed.height,
+		// 				gender: parsed.gender,
+		// 				status: parsed.status
+		// 			})
+		// 		});
+		// 		if (response.ok) {
+		// 			const { rekomendasi } = await response.json();
+		// 			if (rekomendasi) {
+		// 				await prisma.status.update({
+		// 					where: { id: saved.id },
+		// 					data: { recommendation: rekomendasi }
+		// 				});
+		// 			}
+		// 		}
+		// 	} catch (error) {
+		// 		console.error('AI Agent error:', error);
+		// 	}
+		// }, 0);
 
-		return responseToEsp32;
+		// return responseToEsp32;
+		return json({ message: 'Status created successfully' }, { status: 201 });
 	} catch (error) {
 		console.error('Decryption/Storage error:', error);
 		return json({ error: 'Invalid encrypted data or internal error' }, { status: 500 });
