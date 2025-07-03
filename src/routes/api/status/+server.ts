@@ -288,7 +288,7 @@ export const POST: RequestHandler = async (event) => {
 							id: saved.id,
 							age: parsed.age,
 							height: parsed.height,
-							gender: parsed.gender,
+							gender: parsed.gender === 0 ? 'male' : 'female',
 							status: parsed.status
 						})
 					});
