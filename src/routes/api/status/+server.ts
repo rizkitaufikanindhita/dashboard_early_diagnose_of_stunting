@@ -2,7 +2,7 @@ import type { RequestHandler } from './$types';
 import { json } from '@sveltejs/kit';
 import { prisma } from '$lib/server/db';
 import { authMiddleware } from '$lib/server/auth';
-import { AES, enc } from 'crypto-js';
+import AES from 'crypto-js/aes';
 import HmacSHA256 from 'crypto-js/hmac-sha256';
 import Utf8 from 'crypto-js/enc-utf8';
 import Hex from 'crypto-js/enc-hex';
