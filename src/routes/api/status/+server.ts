@@ -22,21 +22,29 @@ export const GET: RequestHandler = async (event) => {
 		// Authenticate user
 		await authMiddleware(event);
 
-		// Fetch all status records
-		const statuses = await prisma.status.findMany();
+		// OPTIMIZATION: Fetch all statuses and all toddlers in parallel to avoid N+1 queries.
+		const [statuses, toddlers] = await Promise.all([
+			prisma.status.findMany({ orderBy: { createdAt: 'desc' } }),
+			prisma.toddler.findMany()
+		]);
+
+		// Create a Map for fast, in-memory lookups of toddlers by their UID.
+		const toddlerMap = new Map(toddlers.map((t) => [t.uid, t]));
+
+		// Convert hex keys to byte arrays once, outside the loop for efficiency.
+		const keyBytes = new Uint8Array(
+			AES_KEY.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16))
+		);
+		const ivBytes = new Uint8Array(
+			AES_IV.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16))
+		);
+
 		const results = [];
 
 		for (const status of statuses) {
 			// Dekripsi payload
 			let decryptedText: string;
 			try {
-				// Convert hex strings to Uint8Arrays
-				const keyBytes = new Uint8Array(
-					AES_KEY.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16))
-				);
-				const ivBytes = new Uint8Array(
-					AES_IV.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16))
-				);
 				const payloadBytes = new Uint8Array(
 					status.encrypted_payload.match(/.{1,2}/g)!.map((byte: string) => parseInt(byte, 16))
 				);
@@ -66,14 +74,12 @@ export const GET: RequestHandler = async (event) => {
 				continue;
 			}
 
-			// Cari toddler berdasarkan uid
-			let toddler = null;
-			if (parsed.uid) {
-				toddler = await prisma.toddler.findUnique({ where: { uid: parsed.uid } });
-			}
+			// OPTIMIZATION: Use the map for an O(1) lookup instead of a database query.
+			const toddler = toddlerMap.get(parsed.uid) || null;
 
 			results.push({
 				...parsed,
+				id: status.id, // Include the status record's own ID
 				toddler,
 				createdAt: status.createdAt,
 				recommendation: status.recommendation
